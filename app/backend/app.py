@@ -5,6 +5,7 @@ import logging
 import mimetypes
 import os
 import time
+import urllib
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Union, cast
 
@@ -46,6 +47,7 @@ from quart_cors import cors
 
 from approaches.approach import Approach
 from approaches.chatreadretrieveread import ChatReadRetrieveReadApproach
+from approaches.chataksarctsgapproach import ChatAKSArcTSGApproach
 from approaches.chatreadretrievereadvision import ChatReadRetrieveReadVisionApproach
 from approaches.retrievethenread import RetrieveThenReadApproach
 from approaches.retrievethenreadvision import RetrieveThenReadVisionApproach
@@ -132,6 +134,7 @@ async def content_file(path: str, auth_claims: Dict[str, Any]):
     blob_container_client: ContainerClient = current_app.config[CONFIG_BLOB_CONTAINER_CLIENT]
     blob: Union[BlobDownloader, DatalakeDownloader]
     try:
+        path = urllib.parse.quote_plus(path)
         blob = await blob_container_client.get_blob_client(path).download_blob()
     except ResourceNotFoundError:
         logging.info("Path not found in general Blob container: %s", path)
@@ -583,7 +586,7 @@ async def setup_clients():
         query_speller=AZURE_SEARCH_QUERY_SPELLER,
     )
 
-    current_app.config[CONFIG_CHAT_APPROACH] = ChatReadRetrieveReadApproach(
+    current_app.config[CONFIG_CHAT_APPROACH] = ChatAKSArcTSGApproach(
         search_client=search_client,
         openai_client=openai_client,
         auth_helper=auth_helper,
@@ -596,6 +599,7 @@ async def setup_clients():
         content_field=KB_FIELDS_CONTENT,
         query_language=AZURE_SEARCH_QUERY_LANGUAGE,
         query_speller=AZURE_SEARCH_QUERY_SPELLER,
+        blob_container_client=current_app.config[CONFIG_BLOB_CONTAINER_CLIENT],
     )
 
     if USE_GPT4V:

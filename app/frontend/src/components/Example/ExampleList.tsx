@@ -3,9 +3,9 @@ import { Example } from "./Example";
 import styles from "./Example.module.css";
 
 const DEFAULT_EXAMPLES: string[] = [
-    "What is included in my Northwind Health Plus plan that is not in standard?",
-    "What happens in a performance review?",
-    "What does a Product Manager do?"
+    "What is AKS-Hybrid?",
+    'How to fix error when create cluster: \'{"code":"BadRequest","message":"admission webhook "vhybridakscluster.kb.io" denied the request: Kubernetes version 1.26.6 is not ready for use on Linux"}\'?',
+    "How to connect to Linux nodes with SSH on HCI?"
 ];
 
 const GPT4V_EXAMPLES: string[] = [

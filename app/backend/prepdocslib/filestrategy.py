@@ -79,6 +79,7 @@ class FileStrategy(Strategy):
         )
         if self.document_action == DocumentAction.Add:
             files = self.list_file_strategy.list()
+            # TODO: if upload failed, the file will be skipped next time because md5 file is already created
             async for file in files:
                 try:
                     sections = await parse_file(file, self.file_processors, self.category, self.image_embeddings)
