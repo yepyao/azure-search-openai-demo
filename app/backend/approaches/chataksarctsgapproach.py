@@ -182,7 +182,7 @@ class ChatAKSArcTSGApproach(ChatApproach):
         tsg_check_prompt_template = """You are a assistant help with AKS Arc production related questions. User may ask some knowledge question, or want to get solution for a prodcution issue.
         User will provide a question with some source docs. The source doc will start in a new line, with its doc name first, and then its content after a ':'.
         You need to judge whether the question is asking for a solution for a production error or issue. Answer with 'Yes' or 'No' in the first line.
-        If the answer is yes. Then you need to judge which source doc describe the same issue with the user question. If no same issue, select one doc which is most similar with the question.
+        If the answer is yes, you need to judge which source doc describe the same issue with the user question. If no same issue, select one doc which is most similar with the question.
         Deduplicate the related doc and sort them from most related to less related.
         Reply with the source doc names, in format '<<doc name>>', each in one line.
         """
@@ -270,13 +270,17 @@ class ChatAKSArcTSGApproach(ChatApproach):
                     [result.serialize_for_results() for result in results],
                 ),
                 ThoughtStep(
-                    "Prompt to classify the search query and rank the related docs",
-                    [str(message) for message in classification_messages].append({"result": classification_result}),
+                    "Prompt to classify if the search query is a TSG search query and rank the related docs",
+                    [str(message) for message in classification_messages],
                     (
                         {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
                         if self.chatgpt_deployment
                         else {"model": self.chatgpt_model}
                     ),
+                ),
+                ThoughtStep(
+                    "Classification result: TSG search query?",
+                    classification_result,
                 ),
                 ThoughtStep(
                     "Prompt to generate answer",
