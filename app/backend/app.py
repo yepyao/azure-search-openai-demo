@@ -134,7 +134,7 @@ async def content_file(path: str, auth_claims: Dict[str, Any]):
     blob_container_client: ContainerClient = current_app.config[CONFIG_BLOB_CONTAINER_CLIENT]
     blob: Union[BlobDownloader, DatalakeDownloader]
     try:
-        path = urllib.parse.quote_plus(path)
+        # path = urllib.parse.quote_plus(path)
         blob = await blob_container_client.get_blob_client(path).download_blob()
     except ResourceNotFoundError:
         logging.info("Path not found in general Blob container: %s", path)
