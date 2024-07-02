@@ -130,14 +130,14 @@ async def content_file(path: str, auth_claims: Dict[str, Any]):
     if path.find("#page=") > 0:
         path_parts = path.rsplit("#page=", 1)
         path = path_parts[0]
-    logging.info("Opening file %s", path)
+    print(f"Opening file {path}")
     blob_container_client: ContainerClient = current_app.config[CONFIG_BLOB_CONTAINER_CLIENT]
     blob: Union[BlobDownloader, DatalakeDownloader]
     try:
         # path = urllib.parse.quote_plus(path)
         blob = await blob_container_client.get_blob_client(path).download_blob()
     except ResourceNotFoundError:
-        logging.info("Path not found in general Blob container: %s", path)
+        print(f"Path not found in general Blob container: {path}")
         if current_app.config[CONFIG_USER_UPLOAD_ENABLED]:
             try:
                 user_oid = auth_claims["oid"]

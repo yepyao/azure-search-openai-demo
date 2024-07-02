@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { marked } from "marked";
+import { useMsal } from "@azure/msal-react";
+import { useLogin, getToken } from "../../authConfig";
+import { getHeaders } from "../../api";
 import styles from "./MarkdownViewer.module.css";
 import { Spinner, SpinnerSize, MessageBar, MessageBarType, Link, IconButton } from "@fluentui/react";
 
@@ -21,10 +24,16 @@ export const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ src }) => {
         return html.replace(ancorLinksRegex, "");
     };
 
+    const client = useLogin ? useMsal().instance : undefined;
+
     useEffect(() => {
         const fetchMarkdown = async () => {
             try {
-                const response = await fetch(src);
+                const token = client ? await getToken(client) : undefined;
+                const response = await fetch(src, {
+                    method: "GET",
+                    headers: getHeaders(token)
+                });
 
                 if (!response.ok) {
                     throw new Error("Failed loading markdown file.");

@@ -5,12 +5,14 @@ import logging
 from typing import Any, Optional
 
 import aiohttp
+from azure.identity import ManagedIdentityCredential, get_bearer_token_provider
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.indexes.models import SearchIndex
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTClaimsError
 from msal import ConfidentialClientApplication
 from msal.token_cache import TokenCache
+import requests
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -66,9 +68,10 @@ class AuthenticationHelper:
             self.require_access_control = require_access_control
             self.enable_global_documents = enable_global_documents
             self.enable_unauthenticated_access = enable_unauthenticated_access
-            self.confidential_client = ConfidentialClientApplication(
-                server_app_id, authority=self.authority, client_credential=server_app_secret, token_cache=TokenCache()
-            )
+            if server_app_secret != "msi":
+                self.confidential_client = ConfidentialClientApplication(
+                    server_app_id, authority=self.authority, client_credential=server_app_secret, token_cache=TokenCache()
+                )
         else:
             self.has_auth_fields = False
             self.require_access_control = False
@@ -205,6 +208,11 @@ class AuthenticationHelper:
 
         return groups
 
+    def get_managed_identity_token(self, audience):
+            azure_credential = ManagedIdentityCredential()
+            token_provider = get_bearer_token_provider(azure_credential, audience)
+            return token_provider()
+        
     async def get_auth_claims_if_enabled(self, headers: dict) -> dict[str, Any]:
         if not self.use_authentication:
             return {}
@@ -218,6 +226,10 @@ class AuthenticationHelper:
 
             # Use the on-behalf-of-flow to acquire another token for use with Microsoft Graph
             # See https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow for more information
+            if self.server_app_secret == "msi":
+                self.confidential_client = ConfidentialClientApplication(
+                    self.server_app_id, authority=self.authority, client_credential={"client_assertion": self.get_managed_identity_token("api://AzureADTokenExchange")}, token_cache=TokenCache()
+                )
             graph_resource_access_token = self.confidential_client.acquire_token_on_behalf_of(
                 user_assertion=auth_token, scopes=["https://graph.microsoft.com/.default"]
             )
@@ -241,15 +253,18 @@ class AuthenticationHelper:
             if missing_groups_claim or has_group_overage_claim:
                 # Read the user's groups from Microsoft Graph
                 auth_claims["groups"] = await AuthenticationHelper.list_groups(graph_resource_access_token)
+            # print(f"Auth claims: {auth_claims}")
+            if "db13c5be-ea54-4018-9a9e-c1c7077afb2f" not in auth_claims["groups"]:
+                raise AuthError(error="Current user is not in allowed groups.", status_code=403)
             return auth_claims
         except AuthError as e:
             logging.exception("Exception getting authorization information - " + json.dumps(e.error))
-            if self.require_access_control and not self.enable_unauthenticated_access:
+            if not self.enable_unauthenticated_access:
                 raise
             return {}
         except Exception:
             logging.exception("Exception getting authorization information")
-            if self.require_access_control and not self.enable_unauthenticated_access:
+            if not self.enable_unauthenticated_access:
                 raise
             return {}
 

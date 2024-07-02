@@ -1,4 +1,5 @@
 from io import BytesIO
+import logging
 import re
 import urllib
 from typing import Any, Coroutine, List, Literal, Optional, Union, overload
@@ -205,18 +206,16 @@ class ChatAKSArcTSGApproach(ChatApproach):
 
         classification_result = classification_completion.choices[0].message.content
 
-        # print("classification_message: " + classification_result)
-
         if (classification_result.lower().startswith('yes')):
             # Get the whole contents of origin documents
             related_docs = re.findall(r"<<([^>>]+)>>", classification_result)
-            print(related_docs)
+            print(f"related_docs: {related_docs}")
             blob = await self.blob_container_client.get_blob_client(related_docs[0]).download_blob()
             stream = BytesIO()
             await blob.readinto(stream)
             blob_content = stream.getvalue().decode("utf-8")
             # Based on the origin documents to generate the solution
-            print("Download doc: "+ related_docs[0] +" Length:" + str(len(blob_content)))
+            print(f"Download doc: {related_docs[0]} Length: {len(blob_content)}")
             # update content to provide
             content = related_docs[0]+": "+nonewlines(blob_content or "")
             # TODO: summary all related doc and trunc if too long

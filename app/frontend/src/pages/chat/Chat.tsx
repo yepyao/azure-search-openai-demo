@@ -27,7 +27,7 @@ import { AnalysisPanel, AnalysisPanelTabs } from "../../components/AnalysisPanel
 import { SettingsButton } from "../../components/SettingsButton";
 import { ClearChatButton } from "../../components/ClearChatButton";
 import { UploadFile } from "../../components/UploadFile";
-import { useLogin, getToken, isLoggedIn, requireAccessControl } from "../../authConfig";
+import { useLogin, getToken, isLoggedIn, requireLogin, requireAccessControl } from "../../authConfig";
 import { VectorSettings } from "../../components/VectorSettings";
 import { useMsal } from "@azure/msal-react";
 import { TokenClaimsDisplay } from "../../components/TokenClaimsDisplay";
@@ -178,6 +178,15 @@ const Chat = () => {
             };
 
             const response = await chatApi(request, shouldStream, token);
+            if (response.status == 401) {
+                throw Error("401 Unauthorized. Please login to continue.");
+            }
+            if (response.status == 403) {
+                throw Error("Forbidden . Please make sure you are a member of AKS Arc groups.");
+            }
+            if (!response.ok) {
+                throw Error("Status Code: " + response.status + " " + response.statusText + " Please try again later.");
+            }
             if (!response.body) {
                 throw Error("No response body");
             }
@@ -339,7 +348,7 @@ const Chat = () => {
                     {!lastQuestionRef.current ? (
                         <div className={styles.chatEmptyState}>
                             <SparkleFilled fontSize={"120px"} primaryFill={"rgba(115, 118, 225, 1)"} aria-hidden="true" aria-label="Chat logo" />
-                            <h1 className={styles.chatEmptyStateTitle}>Chat with AKS Arc Knowledge Base Bot</h1>
+                            <h1 className={styles.chatEmptyStateTitle}>Chat with AKS Arc Bot</h1>
                             <h2 className={styles.chatEmptyStateSubtitle}>Ask anything or try an example</h2>
                             <ExampleList onExampleClicked={onExampleClicked} useGPT4V={useGPT4V} />
                         </div>

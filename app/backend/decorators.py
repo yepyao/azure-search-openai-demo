@@ -23,8 +23,8 @@ def authenticated_path(route_fn: Callable[[str, Dict[str, Any]], Any]):
         try:
             auth_claims = await auth_helper.get_auth_claims_if_enabled(request.headers)
             authorized = await auth_helper.check_path_auth(path, auth_claims, search_client)
-        except AuthError:
-            abort(403)
+        except AuthError as error:
+            abort(error.status_code)
         except Exception as error:
             logging.exception("Problem checking path auth %s", error)
             return error_response(error, route="/content")
