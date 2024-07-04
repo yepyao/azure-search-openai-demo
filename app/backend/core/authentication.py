@@ -264,10 +264,6 @@ class AuthenticationHelper:
                     auth_claims["groups"] = await AuthenticationHelper.list_groups(graph_resource_access_token)
                 # update cache
                 self.claims_cache[oid] = auth_claims
-
-            # print(f"Auth claims: {auth_claims}")
-            if "db13c5be-ea54-4018-9a9e-c1c7077afb2f" not in auth_claims["groups"]:
-                raise AuthError(error="Current user is not in allowed groups.", status_code=403)
             return auth_claims
         except AuthError as e:
             logging.exception("Exception getting authorization information - " + json.dumps(e.error))
@@ -308,6 +304,13 @@ class AuthenticationHelper:
             break
 
         return allowed
+
+    async def check_group_auth(self, allow_groups: list[str], auth_claims: dict[str, Any]) -> bool:
+        for group_id in allow_groups:
+            if group_id in auth_claims["groups"]:
+                print(f"User {auth_claims["oid"]} in group {group_id}, auth passed.")
+                return True
+        return False
 
     # See https://github.com/Azure-Samples/ms-identity-python-on-behalf-of/blob/939be02b11f1604814532fdacc2c2eccd198b755/FlaskAPI/helpers/authorization.py#L44
     async def validate_access_token(self, token: str):
