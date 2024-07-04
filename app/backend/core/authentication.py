@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any, Optional
 
 import aiohttp
@@ -13,6 +14,7 @@ from jose.exceptions import ExpiredSignatureError, JWTClaimsError
 from msal import ConfidentialClientApplication
 from msal.token_cache import TokenCache
 import requests
+from expiringdict import ExpiringDict
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -62,6 +64,10 @@ class AuthenticationHelper:
         # See https://learn.microsoft.com/entra/identity-platform/access-tokens#validate-the-issuer for more information on token validation
         self.key_url = f"{self.authority}/discovery/v2.0/keys"
 
+        self.jwks_cache = None
+        self.jwks_cache_time = None
+        self.claims_cache: ExpiringDict = ExpiringDict(max_len=100, max_age_seconds=3600)
+        
         if self.use_authentication:
             field_names = [field.name for field in search_index.fields] if search_index else []
             self.has_auth_fields = "oids" in field_names and "groups" in field_names
@@ -212,7 +218,7 @@ class AuthenticationHelper:
             azure_credential = ManagedIdentityCredential()
             token_provider = get_bearer_token_provider(azure_credential, audience)
             return token_provider()
-        
+
     async def get_auth_claims_if_enabled(self, headers: dict) -> dict[str, Any]:
         if not self.use_authentication:
             return {}
@@ -224,35 +230,41 @@ class AuthenticationHelper:
             # Validate the token before use
             await self.validate_access_token(auth_token)
 
-            # Use the on-behalf-of-flow to acquire another token for use with Microsoft Graph
-            # See https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow for more information
-            if self.server_app_secret == "msi":
-                self.confidential_client = ConfidentialClientApplication(
-                    self.server_app_id, authority=self.authority, client_credential={"client_assertion": self.get_managed_identity_token("api://AzureADTokenExchange")}, token_cache=TokenCache()
+            oid = jwt.get_unverified_claims(auth_token)["oid"]
+            auth_claims = self.claims_cache.get(oid)
+            if not auth_claims:
+                # Use the on-behalf-of-flow to acquire another token for use with Microsoft Graph
+                # See https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow for more information
+                if self.server_app_secret == "msi":
+                    self.confidential_client = ConfidentialClientApplication(
+                        self.server_app_id, authority=self.authority, client_credential={"client_assertion": self.get_managed_identity_token("api://AzureADTokenExchange")}, token_cache=TokenCache()
+                    )
+                graph_resource_access_token = self.confidential_client.acquire_token_on_behalf_of(
+                    user_assertion=auth_token, scopes=["https://graph.microsoft.com/.default"]
                 )
-            graph_resource_access_token = self.confidential_client.acquire_token_on_behalf_of(
-                user_assertion=auth_token, scopes=["https://graph.microsoft.com/.default"]
-            )
-            if "error" in graph_resource_access_token:
-                raise AuthError(error=str(graph_resource_access_token), status_code=401)
+                if "error" in graph_resource_access_token:
+                    raise AuthError(error=str(graph_resource_access_token), status_code=401)
 
-            # Read the claims from the response. The oid and groups claims are used for security filtering
-            # https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference
-            id_token_claims = graph_resource_access_token["id_token_claims"]
-            auth_claims = {"oid": id_token_claims["oid"], "groups": id_token_claims.get("groups", [])}
+                # Read the claims from the response. The oid and groups claims are used for security filtering
+                # https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference
+                id_token_claims = graph_resource_access_token["id_token_claims"]
+                auth_claims = {"oid": id_token_claims["oid"], "groups": id_token_claims.get("groups", [])}
 
-            # A groups claim may have been omitted either because it was not added in the application manifest for the API application,
-            # or a groups overage claim may have been emitted.
-            # https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference#groups-overage-claim
-            missing_groups_claim = "groups" not in id_token_claims
-            has_group_overage_claim = (
-                missing_groups_claim
-                and "_claim_names" in id_token_claims
-                and "groups" in id_token_claims["_claim_names"]
-            )
-            if missing_groups_claim or has_group_overage_claim:
-                # Read the user's groups from Microsoft Graph
-                auth_claims["groups"] = await AuthenticationHelper.list_groups(graph_resource_access_token)
+                # A groups claim may have been omitted either because it was not added in the application manifest for the API application,
+                # or a groups overage claim may have been emitted.
+                # https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference#groups-overage-claim
+                missing_groups_claim = "groups" not in id_token_claims
+                has_group_overage_claim = (
+                    missing_groups_claim
+                    and "_claim_names" in id_token_claims
+                    and "groups" in id_token_claims["_claim_names"]
+                )
+                if missing_groups_claim or has_group_overage_claim:
+                    # Read the user's groups from Microsoft Graph
+                    auth_claims["groups"] = await AuthenticationHelper.list_groups(graph_resource_access_token)
+                # update cache
+                self.claims_cache[oid] = auth_claims
+
             # print(f"Auth claims: {auth_claims}")
             if "db13c5be-ea54-4018-9a9e-c1c7077afb2f" not in auth_claims["groups"]:
                 raise AuthError(error="Current user is not in allowed groups.", status_code=403)
@@ -302,24 +314,32 @@ class AuthenticationHelper:
         """
         Validate an access token is issued by Entra
         """
-        jwks = None
-        async for attempt in AsyncRetrying(
-            retry=retry_if_exception_type(AuthError),
-            wait=wait_random_exponential(min=15, max=60),
-            stop=stop_after_attempt(5),
-        ):
-            with attempt:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url=self.key_url) as resp:
-                        resp_status = resp.status
-                        if resp_status in [500, 502, 503, 504]:
-                            raise AuthError(
-                                error=f"Failed to get keys info: {await resp.text()}", status_code=resp_status
-                            )
-                        jwks = await resp.json()
+        if not self.jwks_cache or self.jwks_cache_time < time.time() - 3600:
+            # refresh the jwks cache every hour
+            self.jwks_cache = None
+            self.jwks_cache_time = None
 
-        if not jwks or "keys" not in jwks:
-            raise AuthError({"code": "invalid_keys", "description": "Unable to get keys to validate auth token."}, 401)
+            jwks = None
+            async for attempt in AsyncRetrying(
+                retry=retry_if_exception_type(AuthError),
+                wait=wait_random_exponential(min=15, max=60),
+                stop=stop_after_attempt(5),
+            ):
+                with attempt:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url=self.key_url) as resp:
+                            resp_status = resp.status
+                            if resp_status in [500, 502, 503, 504]:
+                                raise AuthError(
+                                    error=f"Failed to get keys info: {await resp.text()}", status_code=resp_status
+                                )
+                            jwks = await resp.json()
+
+            if not jwks or "keys" not in jwks:
+                raise AuthError({"code": "invalid_keys", "description": "Unable to get keys to validate auth token."}, 401)
+
+            self.jwks_cache = jwks
+            self.jwks_cache_time = time.time()
 
         rsa_key = None
         issuer = None
@@ -329,7 +349,7 @@ class AuthenticationHelper:
             unverified_claims = jwt.get_unverified_claims(token)
             issuer = unverified_claims.get("iss")
             audience = unverified_claims.get("aud")
-            for key in jwks["keys"]:
+            for key in self.jwks_cache["keys"]:
                 if key["kid"] == unverified_header["kid"]:
                     rsa_key = {"kty": key["kty"], "kid": key["kid"], "use": key["use"], "n": key["n"], "e": key["e"]}
                     break

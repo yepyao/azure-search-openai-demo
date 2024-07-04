@@ -47,8 +47,8 @@ def authenticated(route_fn: Callable[[Dict[str, Any]], Any]):
         auth_helper = current_app.config[CONFIG_AUTH_CLIENT]
         try:
             auth_claims = await auth_helper.get_auth_claims_if_enabled(request.headers)
-        except AuthError:
-            abort(403)
+        except AuthError as error:
+            abort(error.status_code)
 
         return await route_fn(auth_claims)
 
