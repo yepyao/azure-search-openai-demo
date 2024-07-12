@@ -308,7 +308,7 @@ class AuthenticationHelper:
     async def check_group_auth(self, allow_groups: list[str], auth_claims: dict[str, Any]) -> bool:
         for group_id in allow_groups:
             if group_id in auth_claims["groups"]:
-                print(f"User {auth_claims["oid"]} in group {group_id}, auth passed.")
+                print(f"User {auth_claims['oid']} in group {group_id}, auth passed.")
                 return True
         return False
 
