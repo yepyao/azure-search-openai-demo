@@ -100,6 +100,21 @@ class SearchManager:
                 ),
                 SimpleField(name="category", type="Edm.String", filterable=True, facetable=True),
                 SimpleField(
+                    name="istsg",
+                    type="Edm.Boolean",
+                    filterable=True,
+                ),
+                SimpleField(
+                    name="tsgsolution",
+                    type="Edm.String",
+                    filterable=True,
+                ),
+                SimpleField(
+                    name="tsgrawcontent",
+                    type="Edm.String",
+                    filterable=True,
+                ),
+                SimpleField(
                     name="sourcepage",
                     type="Edm.String",
                     filterable=True,

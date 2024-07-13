@@ -84,6 +84,7 @@ class LocalListFileStrategy(ListFileStrategy):
     async def list(self) -> AsyncGenerator[File, None]:
         async for path in self.list_paths():
             #if not self.check_md5(path):
+            # TODO: if upload failed, the file will be skipped next time because md5 file is already created
             self.check_md5(path)
             yield File(content=open(path, mode="rb"))
 

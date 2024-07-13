@@ -7,6 +7,7 @@ from .fileprocessor import FileProcessor
 from .listfilestrategy import File, ListFileStrategy
 from .searchmanager import SearchManager, Section
 from .strategy import DocumentAction, SearchInfo, Strategy
+from .semanticindexer import SemanticIndexer
 
 logger = logging.getLogger("ingester")
 
@@ -16,6 +17,7 @@ async def parse_file(
     file_processors: dict[str, FileProcessor],
     category: Optional[str] = None,
     image_embeddings: Optional[ImageEmbeddings] = None,
+    semantic_indexer: Optional[SemanticIndexer] = None,
 ) -> List[Section]:
     key = file.file_extension()
     processor = file_processors.get(key)
@@ -27,10 +29,16 @@ async def parse_file(
     logger.info("Splitting '%s' into sections", file.filename())
     if image_embeddings:
         logger.warning("Each page will be split into smaller chunks of text, but images will be of the entire page.")
-    sections = [
+    sections_from_text = [
         Section(split_page, content=file, category=category) for split_page in processor.splitter.split_pages(pages)
     ]
-    return sections
+
+    sections_from_summary = []
+    if semantic_indexer and key == '.md':
+        sections_from_summary = [
+            Section(semantic_summary, content=file, category=category) async for semantic_summary in semantic_indexer.index(pages)
+        ]
+    return sections_from_text + sections_from_summary
 
 
 class FileStrategy(Strategy):
@@ -50,6 +58,7 @@ class FileStrategy(Strategy):
         search_analyzer_name: Optional[str] = None,
         use_acls: bool = False,
         category: Optional[str] = None,
+        semantic_indexer: Optional[SemanticIndexer] = None,
     ):
         self.list_file_strategy = list_file_strategy
         self.blob_manager = blob_manager
@@ -61,6 +70,7 @@ class FileStrategy(Strategy):
         self.search_info = search_info
         self.use_acls = use_acls
         self.category = category
+        self.semantic_indexer = semantic_indexer
 
     async def setup(self):
         search_manager = SearchManager(
@@ -79,16 +89,15 @@ class FileStrategy(Strategy):
         )
         if self.document_action == DocumentAction.Add:
             files = self.list_file_strategy.list()
-            # TODO: if upload failed, the file will be skipped next time because md5 file is already created
             async for file in files:
                 try:
-                    sections = await parse_file(file, self.file_processors, self.category, self.image_embeddings)
-                    if sections:
-                        blob_sas_uris = await self.blob_manager.upload_blob(file)
-                        blob_image_embeddings: Optional[List[List[float]]] = None
-                        if self.image_embeddings and blob_sas_uris:
-                            blob_image_embeddings = await self.image_embeddings.create_embeddings(blob_sas_uris)
-                        await search_manager.update_content(sections, blob_image_embeddings, url=file.url)
+                    sections = await parse_file(file, self.file_processors, self.category, self.image_embeddings, self.semantic_indexer)
+                    # if sections:
+                    #     blob_sas_uris = await self.blob_manager.upload_blob(file)
+                    #     blob_image_embeddings: Optional[List[List[float]]] = None
+                    #     if self.image_embeddings and blob_sas_uris:
+                    #         blob_image_embeddings = await self.image_embeddings.create_embeddings(blob_sas_uris)
+                    #     await search_manager.update_content(sections, blob_image_embeddings, url=file.url)
                 finally:
                     if file:
                         file.close()
