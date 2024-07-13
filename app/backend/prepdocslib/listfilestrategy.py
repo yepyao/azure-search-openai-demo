@@ -83,8 +83,9 @@ class LocalListFileStrategy(ListFileStrategy):
 
     async def list(self) -> AsyncGenerator[File, None]:
         async for path in self.list_paths():
-            if not self.check_md5(path):
-                yield File(content=open(path, mode="rb"))
+            #if not self.check_md5(path):
+            self.check_md5(path)
+            yield File(content=open(path, mode="rb"))
 
     def check_md5(self, path: str) -> bool:
         # if filename ends in .md5 skip
@@ -101,7 +102,7 @@ class LocalListFileStrategy(ListFileStrategy):
                 stored_hash = md5_f.read()
 
         if stored_hash and stored_hash.strip() == existing_hash.strip():
-            logger.info("Skipping %s, no changes detected.", path)
+            #logger.info("Skipping %s, no changes detected.", path)
             return True
 
         # Write the hash

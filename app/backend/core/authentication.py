@@ -306,6 +306,8 @@ class AuthenticationHelper:
         return allowed
 
     async def check_group_auth(self, allow_groups: list[str], auth_claims: dict[str, Any]) -> bool:
+        if self.enable_unauthenticated_access:
+            return True
         for group_id in allow_groups:
             if group_id in auth_claims["groups"]:
                 print(f"User {auth_claims['oid']} in group {group_id}, auth passed.")

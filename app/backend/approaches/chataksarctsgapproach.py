@@ -1,6 +1,8 @@
+import asyncio
 from io import BytesIO
 import logging
 import re
+from tokenize import Whitespace
 import urllib
 from typing import Any, Coroutine, List, Literal, Optional, Union, overload
 
@@ -14,6 +16,7 @@ from openai.types.chat import (
     ChatCompletionToolParam,
 )
 from openai_messages_token_helper import build_messages, get_token_limit
+import tiktoken
 
 from text import nonewlines
 from approaches.approach import ThoughtStep
@@ -72,6 +75,73 @@ class ChatAKSArcTSGApproach(ChatApproach):
         {injected_prompt}
         """
 
+    def truncate_if_exceed_max_token(self, text, max_tokens):
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+        # Tokenize the text
+        encoding = tokenizer.encode(text)
+
+        # Check if the number of tokens exceeds max_tokens
+        if len(encoding) > max_tokens:
+            # Truncate the text
+            truncated_ids = encoding.ids[:max_tokens]
+            # Decode the truncated tokens back to text
+            truncated_text = tokenizer.decode(truncated_ids)
+            return truncated_text
+        else:
+            return text
+    
+    async def get_tsg_summary_list_await(
+        self,
+        related_doc: str,
+    ) -> str:
+        blob = await self.blob_container_client.get_blob_client(related_doc).download_blob()
+        stream = BytesIO()
+        await blob.readinto(stream)
+        blob_content = stream.getvalue().decode("utf-8")
+        # Based on the origin documents to generate the solution
+        print(f"Download doc: {related_doc} Length: {len(blob_content)}")
+
+        # summary the content
+        # TODO: summary can be done in index stage
+        tsg_summary_template = """You are an assistant helping to summarize AKS Arc production-related Troubleshooting Guides (TSGs).
+
+        A Troubleshooting Guide (TSG) is a document that outlines known issues of a software product and provides respective solutions. Each TSG typically includes:
+
+        Symptom/Observation: Describes the production issue, often including an error message returned by the system or a description of abnormal system behavior.
+        Issue Validation: Guides the user on how to confirm if the described issue matches the one they are experiencing.
+        Root Cause and Solution: Explains the root cause of the issue and provides a solution, often with step-by-step instructions.
+        Your task is to summarize the TSG document provided by the user. Your summary should include:
+
+        A precise description of the issue, retaining any error messages.
+        A brief statement about the cause of the issue.
+        A summary of the solution, including steps if applicable, in less than 400 words.
+        The total response should be less than 800 words.
+        """
+
+        query_response_token_limit = 1000
+        tsg_summary_messages = build_messages(
+            model=self.chatgpt_model,
+            system_prompt=tsg_summary_template,
+            new_user_content= self.truncate_if_exceed_max_token(blob_content, self.chatgpt_token_limit - query_response_token_limit - 1000),
+            max_tokens=self.chatgpt_token_limit - query_response_token_limit,
+        )
+
+        tsg_summary_completion: ChatCompletion = await self.openai_client.chat.completions.create(
+            messages=tsg_summary_messages,  # type: ignore
+            # Azure OpenAI takes the deployment name as the model name
+            model=self.chatgpt_deployment if self.chatgpt_deployment else self.chatgpt_model,
+            temperature=0.0,  # Minimize creativity for question classification
+            max_tokens=query_response_token_limit,  # Setting too low risks malformed JSON, setting too high may affect performance
+            n=1,
+        )
+
+        tsg_summary_result = tsg_summary_completion.choices[0].message.content
+        # update content to provide
+        content = related_doc+": "+nonewlines(tsg_summary_result or "")
+        print(f"Summary of related doc: {content}")
+        return content
+
     @overload
     async def run_until_final_call(
         self,
@@ -101,7 +171,7 @@ class ChatAKSArcTSGApproach(ChatApproach):
         use_vector_search = overrides.get("retrieval_mode") in ["vectors", "hybrid", None]
         use_semantic_ranker = True if overrides.get("semantic_ranker") else False
         use_semantic_captions = True if overrides.get("semantic_captions") else False
-        top = overrides.get("top", 4)
+        top = overrides.get("top", 10)
         minimum_search_score = overrides.get("minimum_search_score", 0.0)
         minimum_reranker_score = overrides.get("minimum_reranker_score", 0.0)
         filter = self.build_filter(overrides, auth_claims)
@@ -210,15 +280,14 @@ class ChatAKSArcTSGApproach(ChatApproach):
             # Get the whole contents of origin documents
             related_docs = re.findall(r"<<([^>>]+)>>", classification_result)
             print(f"related_docs: {related_docs}")
-            blob = await self.blob_container_client.get_blob_client(related_docs[0]).download_blob()
-            stream = BytesIO()
-            await blob.readinto(stream)
-            blob_content = stream.getvalue().decode("utf-8")
-            # Based on the origin documents to generate the solution
-            print(f"Download doc: {related_docs[0]} Length: {len(blob_content)}")
-            # update content to provide
-            content = related_docs[0]+": "+nonewlines(blob_content or "")
-            # TODO: summary all related doc and trunc if too long
+            
+            tsg_summary_list_await = []
+            for related_doc in related_docs:
+                tsg_summary_list_await.append(asyncio.create_task(self.get_tsg_summary_list_await(related_doc)))
+
+            content = ""
+            for tsg_summary_await in tsg_summary_list_await:
+                content += "\n" + await tsg_summary_await
 
         # STEP n: Generate a contextual and content specific answer using the search results and chat history
 

@@ -40,7 +40,7 @@ const Chat = () => {
     const [temperature, setTemperature] = useState<number>(0.3);
     const [minimumRerankerScore, setMinimumRerankerScore] = useState<number>(0);
     const [minimumSearchScore, setMinimumSearchScore] = useState<number>(0);
-    const [retrieveCount, setRetrieveCount] = useState<number>(4);
+    const [retrieveCount, setRetrieveCount] = useState<number>(10);
     const [retrievalMode, setRetrievalMode] = useState<RetrievalMode>(RetrievalMode.Hybrid);
     const [useSemanticRanker, setUseSemanticRanker] = useState<boolean>(false);
     const [shouldStream, setShouldStream] = useState<boolean>(true);
@@ -111,6 +111,9 @@ const Chat = () => {
         try {
             setIsStreaming(true);
             for await (const event of readNDJSONStream(responseBody)) {
+                if (event["error"]) {
+                    throw Error(event["error"]);
+                }
                 if (event["context"] && event["context"]["data_points"]) {
                     event["message"] = event["delta"];
                     askResponse = event as ChatAppResponse;
