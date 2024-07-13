@@ -37,6 +37,7 @@ class Section:
     def __init__(self, split_page: SplitPage, content: File, category: Optional[str] = None):
         self.split_page = split_page
         self.content = content
+        self.related_content = ""
         self.category = category
 
 
@@ -99,6 +100,11 @@ class SearchManager:
                     vector_search_profile_name="embedding_config",
                 ),
                 SimpleField(name="category", type="Edm.String", filterable=True, facetable=True),
+                SimpleField(
+                    name="related_content",
+                    type="Edm.String",
+                    filterable=True,
+                ),
                 SimpleField(
                     name="sourcepage",
                     type="Edm.String",
@@ -212,6 +218,7 @@ class SearchManager:
                     {
                         "id": f"{section.content.filename_to_id()}-page-{section_index + batch_index * MAX_BATCH_SIZE}",
                         "content": section.split_page.text,
+                        "related_content": section.related_content,
                         "category": section.category,
                         "sourcepage": (
                             BlobManager.blob_image_name_from_file_page(

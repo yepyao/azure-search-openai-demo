@@ -117,7 +117,7 @@ class LocalListFileStrategy(ListFileStrategy):
                 stored_hash = md5_f.read()
 
         if stored_hash and stored_hash.strip() == existing_hash.strip():
-            #logger.info("Skipping %s, no changes detected.", path)
+            logger.info("Skipping %s, no changes detected.", path)
             return True
         return False
 

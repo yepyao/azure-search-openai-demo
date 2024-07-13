@@ -6,7 +6,9 @@ from typing import Optional, Union
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureDeveloperCliCredential, get_bearer_token_provider
+from openai import AsyncAzureOpenAI
 
+from prepdocslib.semanticindexer import SemanticIndexer
 from prepdocslib.blobmanager import BlobManager
 from prepdocslib.embeddings import (
     AzureOpenAIEmbeddingService,
@@ -205,6 +207,24 @@ def setup_image_embeddings_service(
         )
     return image_embeddings_service
 
+def setup_semantic_indexer(
+    azure_credential: AsyncTokenCredential,
+    openai_service: str,
+    chatgpt_model: str,
+    chatgpt_deployment: str,
+):
+    token_provider = get_bearer_token_provider(azure_credential, "https://cognitiveservices.azure.com/.default")
+    openai_client = AsyncAzureOpenAI(
+        api_version="2024-03-01-preview",
+        azure_endpoint=f"https://{openai_service}.openai.azure.com",
+        azure_ad_token_provider=token_provider,
+    )
+    return SemanticIndexer(
+        openai_client,
+        chatgpt_model,
+        chatgpt_deployment,
+    )
+
 
 async def main(strategy: Strategy, setup_index: bool = True):
     if setup_index:
@@ -300,6 +320,13 @@ if __name__ == "__main__":
         default=1536,
         type=int,
         help="Dimensions for the embedding model (defaults to 1536 for 'text-embedding-ada-002')",
+    )
+    parser.add_argument(
+        "--openaichatgptdeployment",
+        help="Name of the Azure OpenAI model deployment for an chatgpt model ('gpt-4' recommended)",
+    )
+    parser.add_argument(
+        "--openaichatgptmodelname", help="Name of the Azure OpenAI chatgpt model ('gpt-4' recommended)"
     )
     parser.add_argument(
         "--novectors",
@@ -454,6 +481,13 @@ if __name__ == "__main__":
             azure_credential=azd_credential, vision_endpoint=args.visionendpoint, search_images=args.searchimages
         )
 
+        semantic_indexer = setup_semantic_indexer(
+            azure_credential=azd_credential,
+            openai_service=args.openaiservice,
+            chatgpt_model=args.openaichatgptmodelname,
+            chatgpt_deployment=args.openaichatgptdeployment,
+        )
+
         ingestion_strategy = FileStrategy(
             search_info=search_info,
             list_file_strategy=list_file_strategy,
@@ -465,6 +499,7 @@ if __name__ == "__main__":
             search_analyzer_name=args.searchanalyzername,
             use_acls=args.useacls,
             category=args.category,
+            semantic_indexer=semantic_indexer,
         )
 
     loop.run_until_complete(main(ingestion_strategy, setup_index=not args.remove and not args.removeall))
