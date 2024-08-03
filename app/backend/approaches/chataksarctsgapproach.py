@@ -255,7 +255,7 @@ class ChatAKSArcTSGApproach(ChatApproach):
         You need to judge whether the question is asking for a solution for a production error or issue. Answer with 'Yes' or 'No' in the first line.
         If the answer is yes, you need to judge which source doc describe the same issue with the user question. If no same issue, select one doc which is most similar with the question.
         Deduplicate the related doc and sort them from most related to less related.
-        Reply with the source doc names, in format '<<doc name>>', each in one line.
+        Reply with the source doc names, MUST in format '<<doc name>>', keep the doc name as it is, each in one line.
         """
 
         classification_messages = build_messages(

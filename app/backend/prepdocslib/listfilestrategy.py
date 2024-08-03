@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 import logging
 import os
 import re
@@ -22,10 +23,11 @@ class File:
     This file might contain access control information about which users or groups can access it
     """
 
-    def __init__(self, content: IO, acls: Optional[dict[str, list]] = None, url: Optional[str] = None):
+    def __init__(self, content: IO, acls: Optional[dict[str, list]] = None, url: Optional[str] = None, path:Optional[str] = None):
         self.content = content
         self.acls = acls or {}
         self.url = url
+        self.path = path
 
     def filename(self):
         return os.path.basename(self.content.name)
@@ -58,6 +60,10 @@ class ListFileStrategy(ABC):
     async def list_paths(self) -> AsyncGenerator[str, None]:
         if False:  # pragma: no cover - this is necessary for mypy to type check
             yield
+    
+    async def mark_success(self):
+        if False:
+            return
 
 
 class LocalListFileStrategy(ListFileStrategy):
@@ -76,16 +82,25 @@ class LocalListFileStrategy(ListFileStrategy):
         for path in glob(path_pattern):
             if os.path.isdir(path):
                 async for p in self._list_paths(f"{path}/*"):
-                    yield p
+                    if not p.endswith(".acl"):
+                        yield p
             else:
                 # Only list files, not directories
                 yield path
 
     async def list(self) -> AsyncGenerator[File, None]:
         async for path in self.list_paths():
-            #if not self.check_md5(path):
-            self.check_md5(path)
-            yield File(content=open(path, mode="rb"))
+            if not self.check_md5(path):
+                acl_path = path + ".acl"
+                if os.path.isfile(acl_path):
+                    file = open(acl_path, "r")
+                    acls = json.loads(file.readline())
+                    yield File(path=path, content=open(path, mode="rb"), acls=acls)
+                else:
+                    yield File(path=path, content=open(path, mode="rb"))
+
+    async def mark_success(self, file:File):
+        self.update_md5(file.path)
 
     def check_md5(self, path: str) -> bool:
         # if filename ends in .md5 skip
@@ -104,8 +119,13 @@ class LocalListFileStrategy(ListFileStrategy):
         if stored_hash and stored_hash.strip() == existing_hash.strip():
             #logger.info("Skipping %s, no changes detected.", path)
             return True
+        return False
 
+    def update_md5(self, path: str) -> bool:
         # Write the hash
+        with open(path, "rb") as file:
+            existing_hash = hashlib.md5(file.read()).hexdigest()
+        hash_path = f"{path}.md5"
         with open(hash_path, "w", encoding="utf-8") as md5_f:
             md5_f.write(existing_hash)
 
