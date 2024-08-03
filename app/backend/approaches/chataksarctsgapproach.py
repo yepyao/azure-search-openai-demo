@@ -100,7 +100,7 @@ class ChatAKSArcTSGApproach(ChatApproach):
         await blob.readinto(stream)
         blob_content = stream.getvalue().decode("utf-8")
         # Based on the origin documents to generate the solution
-        print(f"Download doc: {related_doc} Length: {len(blob_content)}")
+        print(f"Downloaded doc: {related_doc} Length: {len(blob_content)}")
 
         # summary the content
         # TODO: summary can be done in index stage

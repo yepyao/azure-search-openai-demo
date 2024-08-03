@@ -36,7 +36,8 @@ def copy_file(file_path: str, target_folder:str, title: str, link: str, acl_oid:
     if not path.exists(directory):
         os.makedirs(directory)
 
-    new_file_path = path.join(path.dirname(path.realpath(__file__)),"..\\..\\data\\msk8s", target_folder, title + ".md")
+    filename = title.replace("[","I").replace("]","I")
+    new_file_path = path.join(path.dirname(path.realpath(__file__)),"..\\..\\data\\msk8s", target_folder, filename + ".md")
     if path.isfile(new_file_path):
         print(f"Warning: {new_file_path} already exist, will be overwrite.")
 
