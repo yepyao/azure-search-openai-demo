@@ -151,3 +151,4 @@ data/**/*.md5
 .DS_Store
 
 data/msk8s/*
+app/env.list

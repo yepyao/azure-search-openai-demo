@@ -1,0 +1,17 @@
+FROM python:3.9
+
+# Working directory
+WORKDIR /app
+
+# Copy application code
+COPY ./backend .
+
+# Install dependencies
+RUN pip install gunicorn
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose port
+EXPOSE 8000
+
+# Run Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers=4", "main:app"]
