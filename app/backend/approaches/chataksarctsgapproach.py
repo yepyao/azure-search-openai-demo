@@ -47,7 +47,8 @@ class ChatAKSArcTSGApproach(ChatApproach):
         content_field: str,
         query_language: str,
         query_speller: str,
-        blob_container_client:ContainerClient
+        blob_container_client:ContainerClient,
+        tsgselection:bool,
     ):
         self.search_client = search_client
         self.openai_client = openai_client
@@ -63,6 +64,7 @@ class ChatAKSArcTSGApproach(ChatApproach):
         self.query_speller = query_speller
         self.chatgpt_token_limit = get_token_limit(chatgpt_model)
         self.blob_container_client = blob_container_client
+        self.tsgselection = tsgselection
 
     @property
     def system_message_chat_conversation(self):
@@ -248,48 +250,49 @@ class ChatAKSArcTSGApproach(ChatApproach):
         sources_content = self.get_sources_content(results, use_semantic_captions, use_image_citation=False)
         content = "\n".join(sources_content)
 
-        # STEP 3: Check if original_user_query is asking a trouble shooting question and the which source documents describe the same issue.
+        if self.tsgselection:
+            # STEP 2*: Check if original_user_query is asking a trouble shooting question and the which source documents describe the same issue.
 
-        tsg_check_prompt_template = """You are a assistant help with AKS Arc production related questions. User may ask some knowledge question, or want to get solution for a prodcution issue.
-        User will provide a question with some source docs. The source doc will start in a new line, with its doc name first, and then its content after a ':'.
-        You need to judge whether the question is asking for a solution for a production error or issue. Answer with 'Yes' or 'No' in the first line.
-        If the answer is yes, you need to judge which source doc describe the same issue with the user question. If no same issue, select one doc which is most similar with the question.
-        Deduplicate the related doc and sort them from most related to less related.
-        Reply with the source doc names, MUST in format '<<doc name>>', keep the doc name as it is, each in one line.
-        """
+            tsg_check_prompt_template = """You are a assistant help with AKS Arc production related questions. User may ask some knowledge question, or want to get solution for a prodcution issue.
+            User will provide a question with some source docs. The source doc will start in a new line, with its doc name first, and then its content after a ':'.
+            You need to judge whether the question is asking for a solution for a production error or issue. Answer with 'Yes' or 'No' in the first line.
+            If the answer is yes, you need to judge which source doc describe the same issue with the user question. If no same issue, select one doc which is most similar with the question.
+            Deduplicate the related doc and sort them from most related to less related.
+            Reply with the source doc names, MUST in format '<<doc name>>', keep the doc name as it is, each in one line.
+            """
 
-        classification_messages = build_messages(
-            model=self.chatgpt_model,
-            system_prompt=tsg_check_prompt_template,
-            new_user_content=original_user_query + "\n\nSources:\n" + content,
-            max_tokens=self.chatgpt_token_limit - query_response_token_limit,
-        )
+            classification_messages = build_messages(
+                model=self.chatgpt_model,
+                system_prompt=tsg_check_prompt_template,
+                new_user_content=original_user_query + "\n\nSources:\n" + content,
+                max_tokens=self.chatgpt_token_limit - query_response_token_limit,
+            )
 
-        classification_completion: ChatCompletion = await self.openai_client.chat.completions.create(
-            messages=classification_messages,  # type: ignore
-            # Azure OpenAI takes the deployment name as the model name
-            model=self.chatgpt_deployment if self.chatgpt_deployment else self.chatgpt_model,
-            temperature=0.0,  # Minimize creativity for question classification
-            max_tokens=query_response_token_limit,  # Setting too low risks malformed JSON, setting too high may affect performance
-            n=1,
-        )
+            classification_completion: ChatCompletion = await self.openai_client.chat.completions.create(
+                messages=classification_messages,  # type: ignore
+                # Azure OpenAI takes the deployment name as the model name
+                model=self.chatgpt_deployment if self.chatgpt_deployment else self.chatgpt_model,
+                temperature=0.0,  # Minimize creativity for question classification
+                max_tokens=query_response_token_limit,  # Setting too low risks malformed JSON, setting too high may affect performance
+                n=1,
+            )
 
-        classification_result = classification_completion.choices[0].message.content
+            classification_result = classification_completion.choices[0].message.content
 
-        if (classification_result.lower().startswith('yes')):
-            # Get the whole contents of origin documents
-            related_docs = re.findall(r"<<([^>>]+)>>", classification_result)
-            print(f"related_docs: {related_docs}")
-            
-            tsg_summary_list_await = []
-            for related_doc in related_docs:
-                tsg_summary_list_await.append(asyncio.create_task(self.get_tsg_summary_list_await(related_doc)))
+            if (classification_result.lower().startswith('yes')):
+                # Get the whole contents of origin documents
+                related_docs = re.findall(r"<<([^>>]+)>>", classification_result)
+                print(f"related_docs: {related_docs}")
+                
+                tsg_summary_list_await = []
+                for related_doc in related_docs:
+                    tsg_summary_list_await.append(asyncio.create_task(self.get_tsg_summary_list_await(related_doc)))
 
-            content = ""
-            for tsg_summary_await in tsg_summary_list_await:
-                content += "\n" + await tsg_summary_await
+                content = ""
+                for tsg_summary_await in tsg_summary_list_await:
+                    content += "\n" + await tsg_summary_await
 
-        # STEP n: Generate a contextual and content specific answer using the search results and chat history
+        # STEP 3: Generate a contextual and content specific answer using the search results and chat history
 
         # Allow client to replace the entire prompt, or to inject into the exiting prompt using >>>
         system_message = self.get_system_prompt(
@@ -309,57 +312,63 @@ class ChatAKSArcTSGApproach(ChatApproach):
 
         data_points = {"text": sources_content}
 
+        thoughts = [
+            ThoughtStep(
+                "Prompt to generate search query",
+                [str(message) for message in query_messages],
+                (
+                    {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
+                    if self.chatgpt_deployment
+                    else {"model": self.chatgpt_model}
+                ),
+            ),
+            ThoughtStep(
+                "Search using generated search query",
+                query_text,
+                {
+                    "use_semantic_captions": use_semantic_captions,
+                    "use_semantic_ranker": use_semantic_ranker,
+                    "top": top,
+                    "filter": filter,
+                    "use_vector_search": use_vector_search,
+                    "use_text_search": use_text_search,
+                },
+            ),
+            ThoughtStep(
+                "Search results",
+                [result.serialize_for_results() for result in results],
+            ),
+        ]
+
+        if self.tsgselection:
+            thoughts.append(ThoughtStep(
+                "Prompt to classify if the search query is a TSG search query and rank the related docs",
+                [str(message) for message in classification_messages],
+                (
+                    {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
+                    if self.chatgpt_deployment
+                    else {"model": self.chatgpt_model}
+                ),
+            ))
+            thoughts.append(ThoughtStep(
+                "Classification result: TSG search query?",
+                classification_result,
+            ))
+
+        thoughts.append(ThoughtStep(
+                "Prompt to generate answer",
+                [str(message) for message in messages],
+                (
+                    {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
+                    if self.chatgpt_deployment
+                    else {"model": self.chatgpt_model}
+                ),
+            )
+        )
+
         extra_info = {
             "data_points": data_points,
-            "thoughts": [
-                ThoughtStep(
-                    "Prompt to generate search query",
-                    [str(message) for message in query_messages],
-                    (
-                        {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
-                        if self.chatgpt_deployment
-                        else {"model": self.chatgpt_model}
-                    ),
-                ),
-                ThoughtStep(
-                    "Search using generated search query",
-                    query_text,
-                    {
-                        "use_semantic_captions": use_semantic_captions,
-                        "use_semantic_ranker": use_semantic_ranker,
-                        "top": top,
-                        "filter": filter,
-                        "use_vector_search": use_vector_search,
-                        "use_text_search": use_text_search,
-                    },
-                ),
-                ThoughtStep(
-                    "Search results",
-                    [result.serialize_for_results() for result in results],
-                ),
-                ThoughtStep(
-                    "Prompt to classify if the search query is a TSG search query and rank the related docs",
-                    [str(message) for message in classification_messages],
-                    (
-                        {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
-                        if self.chatgpt_deployment
-                        else {"model": self.chatgpt_model}
-                    ),
-                ),
-                ThoughtStep(
-                    "Classification result: TSG search query?",
-                    classification_result,
-                ),
-                ThoughtStep(
-                    "Prompt to generate answer",
-                    [str(message) for message in messages],
-                    (
-                        {"model": self.chatgpt_model, "deployment": self.chatgpt_deployment}
-                        if self.chatgpt_deployment
-                        else {"model": self.chatgpt_model}
-                    ),
-                ),
-            ],
+            "thoughts": thoughts,
         }
 
         chat_coroutine = self.openai_client.chat.completions.create(

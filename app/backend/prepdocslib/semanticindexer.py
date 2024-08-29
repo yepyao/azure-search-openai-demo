@@ -17,7 +17,7 @@ class SemanticIndexer(ABC):
         self.openai_client = openai_client
         self.chatgpt_model = chatgpt_model
         self.chatgpt_deployment = chatgpt_deployment
-        self.chatgpt_token_limit = 128000 # hardcode for we use gpt-4o mini
+        self.chatgpt_token_limit = get_token_limit(chatgpt_model)
 
     async def get_related_content(self, search_content:str, full_content :str) -> str:
         tsg_check_prompt_template = """You are a assistant help get related content from a document which part is related to provided short content.

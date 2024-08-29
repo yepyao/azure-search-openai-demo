@@ -603,6 +603,7 @@ async def setup_clients():
         query_language=AZURE_SEARCH_QUERY_LANGUAGE,
         query_speller=AZURE_SEARCH_QUERY_SPELLER,
         blob_container_client=current_app.config[CONFIG_BLOB_CONTAINER_CLIENT],
+        tsgselection=False
     )
 
     if USE_GPT4V:

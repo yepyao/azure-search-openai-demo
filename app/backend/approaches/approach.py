@@ -32,6 +32,7 @@ from text import nonewlines
 class Document:
     id: Optional[str]
     content: Optional[str]
+    related_content: Optional[str]
     embedding: Optional[List[float]]
     image_embedding: Optional[List[float]]
     category: Optional[str]
@@ -47,6 +48,7 @@ class Document:
         return {
             "id": self.id,
             "content": self.content,
+            "related_content": self.related_content,
             "embedding": Document.trim_embedding(self.embedding),
             "imageEmbedding": Document.trim_embedding(self.image_embedding),
             "category": self.category,
@@ -170,6 +172,7 @@ class Approach(ABC):
                     Document(
                         id=document.get("id"),
                         content=document.get("content"),
+                        related_content=document.get("related_content"),
                         embedding=document.get("embedding"),
                         image_embedding=document.get("imageEmbedding"),
                         category=document.get("category"),
@@ -206,7 +209,7 @@ class Approach(ABC):
             ]
         else:
             return [
-                (self.get_citation((doc.sourcepage or ""), use_image_citation)) + ": " + nonewlines(doc.content or "")
+                (self.get_citation((doc.sourcepage or ""), use_image_citation)) + ": " + nonewlines(doc.content+"\n"+doc.related_content or "")
                 for doc in results
             ]
 
